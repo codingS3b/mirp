@@ -182,7 +182,8 @@ def plot_image(img_obj, roi_list=None, slice_id="all", roi_mask=None, file_path=
                         enhance=img_obj.spacing[2])
 
 
-def plotter(slice_list, colour_map_list, file_name=None, overlay_alpha=1.0, intensity_range=None, enhance=1.0):
+def plotter(slice_list, colour_map_list, file_name=None, overlay_alpha=1.0, intensity_range=None, enhance=1.0,
+            dpi=72):
     """
     This is the background plotting function that does the actual plotting of images.
 
@@ -191,6 +192,7 @@ def plotter(slice_list, colour_map_list, file_name=None, overlay_alpha=1.0, inte
     :param file_name: Full path with file name for writing the image to. If set to None (default), the image is not saved to file, but displayed in a separate window instead.
     :param overlay_alpha: Transparency of overlay images, i.e. the second, third etc. images in the slice list.
     :param intensity_range: Intensity range for the intensities in the plot.
+    :param dpi: dots per inch of the figure. Default = 72.
     :return: None
     """
 
@@ -203,15 +205,11 @@ def plotter(slice_list, colour_map_list, file_name=None, overlay_alpha=1.0, inte
         display_frame = False
 
     # Determine width and height of the figure
-    dpi = 72
     fig_width = slice_list[0].shape[1] / dpi
     fig_height = (slice_list[0].shape[0]) / dpi
 
     # Create figure
     fig = plt.figure(frameon=display_frame, dpi=dpi, figsize=(fig_width, fig_height))
-
-    # Create image list
-    im_list = []
 
     # Iterate over slices, starting with the first slice
     for ii in np.arange(len(slice_list)):
@@ -223,11 +221,24 @@ def plotter(slice_list, colour_map_list, file_name=None, overlay_alpha=1.0, inte
 
         # Add images to figure
         if ii == 0 and intensity_range is not None:
-            im_list.append(plt.figimage(rescale(image=slice_list[ii], scale=enhance, anti_aliasing=False, multichannel=False, mode="edge"), cmap=plt.get_cmap(colour_map_list[ii]),
-                                        alpha=curr_alpha, vmin=intensity_range[0], vmax=intensity_range[1], resize=True))
+            data = rescale(
+                image=slice_list[ii], scale=enhance, anti_aliasing=False,
+                multichannel=False, mode="edge")
+
+            fig.figimage(data, cmap=plt.get_cmap(colour_map_list[ii]),
+                         alpha=curr_alpha, resize=True,
+                         vmin=intensity_range[0], vmax=intensity_range[1])
         else:
-            im_list.append(plt.figimage(rescale(image=slice_list[ii], scale=enhance, anti_aliasing=False, multichannel=False, order=0, mode="edge"), cmap=plt.get_cmap(colour_map_list[ii]),
-                                        alpha=curr_alpha, resize=True))
+            data = rescale(
+                image=slice_list[ii], scale=enhance, anti_aliasing=False,
+                multichannel=False, order=0, mode="edge")
+
+            fig.figimage(data, cmap=plt.get_cmap(colour_map_list[ii]),
+                         alpha=curr_alpha, resize=True)
+
+        # TODO: remove after debugging
+        # print(os.path.split(file_name)[1], "slice_list_ii", ii, "data.shape", data.shape, data.min(), data.max(), np.unique(data))
+        # np.save(file_name.split(".png")[0] + f"_ii_{ii}.npy", data)
 
     # Show figure
     if display_frame:
@@ -235,10 +246,10 @@ def plotter(slice_list, colour_map_list, file_name=None, overlay_alpha=1.0, inte
 
     # Save figure to file
     if not display_frame:
-        plt.savefig(file_name, pad_inches=0.0, bbox_inches='tight')
+        fig.savefig(file_name, pad_inches=0.0, bbox_inches='tight')
 
         # Close figure
-        plt.close()
+        plt.close(fig=fig)
 
 
 def crop_image_intensity(img_slice, g_range, modality):
