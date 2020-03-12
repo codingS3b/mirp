@@ -291,7 +291,7 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
 
     # Check uniqueness of FOR_uid
     if len(list(set(series_FOR_uid))) > 1 and frame_of_ref_uid is None and series_uid is None:
-        raise ValueError(f"Multiple series with different frame of reference UIDs were found in the DICOM folder.")
+        raise ValueError(f"Multiple series with different frame of reference UIDs were found in the DICOM folder {image_folder}: {set(series_FOR_uid)}")
 
     elif len(list(set(series_FOR_uid))) > 1 and frame_of_ref_uid is None and series_uid is not None:
         frame_of_ref_uid = [series_FOR_uid[ii] for ii, file_series_uid in enumerate(series_series_uid) if file_series_uid == series_uid]
@@ -304,7 +304,10 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
     elif frame_of_ref_uid is not None:
 
         if frame_of_ref_uid not in series_FOR_uid:
-            raise ValueError(f"The requested frame of reference UID ({frame_of_ref_uid}) was not found in the DICOM folder {image_folder}. Found: {list(set(series_FOR_uid))}")
+            msg = f"\nThe requested frame of reference UID ({frame_of_ref_uid}) "
+                  f"was not found in the DICOM folder {image_folder}. "
+                  f"Found: {list(set(series_FOR_uid))}\n"
+            raise ValueError(msg)
 
     else:
         frame_of_ref_uid = series_FOR_uid[0]
