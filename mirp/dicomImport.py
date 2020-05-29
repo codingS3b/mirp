@@ -207,7 +207,8 @@ def read_roi_names(dcm_folder):
     return file_name_list, roi_names
 
 
-def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, series_uid=None, frame_of_ref_uid=None):
+def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, series_uid=None, frame_of_ref_uid=None,
+                             disable_checks=True):
 
     # Check folder contents, keep only files that are recognised as DICOM images.
     file_list = os.listdir(image_folder)
@@ -267,6 +268,12 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
     if len(file_list) == 0:
         raise ValueError(f"The DICOM folder does not contain any DICOM images with a currently supported modality ({allowed_modalities}).")
 
+    if disable_checks:
+        return file_list
+
+    print(f"in _find_dicom_image_series:\nfile_list={file_list}\n\nseries_series_uid={series_series_uid}"
+          f"\n\nseries_FOR_uid={series_FOR_uid}")
+
     # Check uniqueness of series UID
     if len(list(set(series_series_uid))) > 1 and series_uid is None and frame_of_ref_uid is None:
         raise ValueError(f"Multiple series UID were found in the DICOM folder. Please select one using the series_uid argument. Found: {list(set(series_series_uid))}")
@@ -304,9 +311,9 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
     elif frame_of_ref_uid is not None:
 
         if frame_of_ref_uid not in series_FOR_uid:
-            msg = f"\nThe requested frame of reference UID ({frame_of_ref_uid}) "
+            msg = (f"\nThe requested frame of reference UID ({frame_of_ref_uid}) "
                   f"was not found in the DICOM folder {image_folder}. "
-                  f"Found: {list(set(series_FOR_uid))}\n"
+                  f"Found: {list(set(series_FOR_uid))}\n")
             raise ValueError(msg)
 
     else:
