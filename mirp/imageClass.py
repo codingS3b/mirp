@@ -14,13 +14,23 @@ from mirp.utilities import get_version
 class ImageClass:
     # Class for image volumes
 
-    def __init__(self, voxel_grid, origin, slice_z_pos, spacing, orientation, modality=None, spat_transform="base", no_image=False,
-                 metadata=None, metadata_sop_instances=None):
-        self.origin   = np.array(origin)    # Coordinates of [0,0,0] voxel in mm
-        self.spacing  = np.array(spacing)   # Voxel spacing in mm
-        self.slice_z_pos = np.array(slice_z_pos)    # Position along stack axis
-        self.spat_transform = spat_transform        # Signifies whether the current image is a base image or not
+    def __init__(self, voxel_grid, origin, spacing, orientation, modality=None, spat_transform="base", no_image=False,
+                 metadata=None, slice_table=None):
+
+        # Set details regarding voxel orientation and such
+        self.origin = np.array(origin)
         self.orientation = np.array(orientation)
+
+        self.spat_transform = spat_transform        # Signifies whether the current image is a base image or not
+        self.slice_table = slice_table
+
+        # The spacing, the affine matrix and its inverse are set using the set_spacing method.
+        self.spacing = None
+        self.m_affine = None
+        self.m_affine_inv = None
+
+        # Set voxel spacing. This also set the affine matrix and its inverse.
+        self.set_spacing(new_spacing=np.array(spacing))
 
         # Image name
         self.name = None
@@ -62,7 +72,6 @@ class ImageClass:
         # Set metadata and a list of update tags
         self.metadata: Union[FileDataset, None] = metadata
         self.as_parametric_map = False
-        self.metadata_sop_instances = metadata_sop_instances
 
         # Image modality
         if modality is None and metadata is not None:
@@ -94,11 +103,31 @@ class ImageClass:
         pylab.imshow(self.get_voxel_grid()[img_slice, :, :], cmap=pylab.cm.bone)
         pylab.show()
 
+    def set_spacing(self, new_spacing):
+
+        # Update spacing
+        self.spacing: np.ndarray = new_spacing
+
+        # Recompute the affine matrices
+        m_affine = np.zeros((3, 3), dtype=np.float)
+
+        # z-coordinates
+        m_affine[:, 0] = self.spacing[0] * np.array([self.orientation[0], self.orientation[1], self.orientation[2]])
+
+        # y-coordinates
+        m_affine[:, 1] = self.spacing[1] * np.array([self.orientation[3], self.orientation[4], self.orientation[5]])
+
+        # x-coordinates
+        m_affine[:, 2] = self.spacing[2] * np.array([self.orientation[6], self.orientation[7], self.orientation[8]])
+
+        self.m_affine = m_affine
+        self.m_affine_inv = np.linalg.inv(self.m_affine)
+
     def set_voxel_grid(self, voxel_grid):
         """ Sets voxel grid """
 
         # Determine size
-        self.size  = np.array(voxel_grid.shape)
+        self.size = np.array(voxel_grid.shape)
         self.dtype_name = voxel_grid.dtype.name
 
         # Encode voxel grid
@@ -135,7 +164,8 @@ class ImageClass:
         if self.dtype_name == "bool":
 
             # Run length encoding for "True"
-            rle_end = np.array(np.append(np.where(voxel_grid.ravel()[1:] != voxel_grid.ravel()[:-1]), np.prod(self.size) - 1))
+            rle_end = np.array(np.append(np.where(voxel_grid.ravel()[1:] != voxel_grid.ravel()[:-1]),
+                                         np.prod(self.size) - 1))
             rle_start = np.cumsum(np.append(0, np.diff(np.append(-1, rle_end))))[:-1]
             rle_val = voxel_grid.ravel()[rle_start]
 
@@ -253,22 +283,35 @@ class ImageClass:
 
         # Check if pre-processing is required
         if settings.img_interpolate.anti_aliasing:
-            self.set_voxel_grid(voxel_grid=gaussian_preprocess_filter(orig_vox=self.get_voxel_grid(), orig_spacing=self.spacing, sample_spacing=new_spacing,
-                                                                      param_beta=settings.img_interpolate.smoothing_beta, mode="nearest", by_slice=by_slice))
+            self.set_voxel_grid(voxel_grid=gaussian_preprocess_filter(orig_vox=self.get_voxel_grid(),
+                                                                      orig_spacing=self.spacing,
+                                                                      sample_spacing=new_spacing,
+                                                                      param_beta=settings.img_interpolate.smoothing_beta,
+                                                                      mode="nearest",
+                                                                      by_slice=by_slice))
 
         # Interpolate image and positioning
-        self.size, self.origin, self.spacing, upd_voxel_grid = \
-            interpolate_to_new_grid(orig_dim=self.size, orig_origin=self.origin, orig_spacing=self.spacing, orig_vox=self.get_voxel_grid(),
-                                    sample_spacing=new_spacing, translation=trans_vec, order=order, mode="nearest", align_to_center=True)
+        self.size, sample_spacing, upd_voxel_grid, grid_origin = \
+            interpolate_to_new_grid(orig_dim=self.size,
+                                    orig_spacing=self.spacing,
+                                    orig_vox=self.get_voxel_grid(),
+                                    sample_spacing=new_spacing,
+                                    translation=trans_vec,
+                                    order=order,
+                                    mode="nearest",
+                                    align_to_center=True)
+
+        # Update origin before spacing, because computing the origin requires the original affine matrix.
+        self.origin = self.origin + np.dot(self.m_affine, np.transpose(grid_origin))
+
+        # Update spacing and affine matrix.
+        self.set_spacing(sample_spacing)
 
         # Round intensities in case of modalities with inherently discretised intensities
         if (self.modality == "CT") and (self.spat_transform == "base"):
             upd_voxel_grid = np.round(upd_voxel_grid)
         elif (self.modality == "PT") and (self.spat_transform == "base"):
             upd_voxel_grid[upd_voxel_grid < 0.0] = 0.0
-
-        # Update slice z positions
-        self.slice_z_pos = self.origin[0] + np.arange(start=0, stop=self.size[0]) * self.spacing[0]
 
         # Set interpolation
         self.interpolated = True
@@ -321,7 +364,7 @@ class ImageClass:
 
         self.set_voxel_grid(voxel_grid=voxel_grid)
 
-    def saturate(self, intensity_range, fill_value=np.nan):
+    def saturate(self, intensity_range, fill_value=None):
         """
         Saturate image intensities using an intensity range
         :param intensity_range: range of intensity values
@@ -355,7 +398,7 @@ class ImageClass:
             # Set the updated voxel grid
             self.set_voxel_grid(voxel_grid=voxel_grid)
 
-    def normalise_intensities(self, norm_method="none", intensity_range=None):
+    def normalise_intensities(self, norm_method="none", intensity_range=None, saturation_range=None, mask=None):
         """
         Normalises image intensities
         :param norm_method: string defining the normalisation method. Should be one of "none", "range", "standardisation"
@@ -370,27 +413,101 @@ class ImageClass:
         if intensity_range is None:
             intensity_range = [np.nan, np.nan]
 
+        if mask is None:
+            mask = np.ones(self.size, dtype=np.bool)
+        else:
+            mask = mask.astype(np.bool)
+
+        if np.sum(mask) == 0:
+            mask = np.ones(self.size, dtype=np.bool)
+
+        if saturation_range is None:
+            saturation_range = [np.nan, np.nan]
+
         if norm_method == "none":
             return
 
         elif norm_method == "range":
+            # Normalisation to [0, 1] range using fixed intensities.
 
             # Get voxel grid
             voxel_grid = self.get_voxel_grid()
 
             # Find maximum and minimum intensities
             if np.isnan(intensity_range[0]):
-                min_int = np.min(voxel_grid)
+                min_int = np.min(voxel_grid[mask])
             else:
                 min_int = intensity_range[0]
 
             if np.isnan(intensity_range[1]):
-                max_int = np.max(voxel_grid)
+                max_int = np.max(voxel_grid[mask])
             else:
                 max_int = intensity_range[1]
 
             # Normalise by range
-            voxel_grid = (voxel_grid - min_int) / (max_int - min_int)
+            if not max_int == min_int:
+                voxel_grid = (voxel_grid - min_int) / (max_int - min_int)
+            else:
+                voxel_grid = voxel_grid - min_int
+
+            # Update the voxel grid
+            self.set_voxel_grid(voxel_grid=voxel_grid)
+
+            self.is_normalised = True
+
+        elif norm_method == "relative_range":
+            # Normalisation to [0, 1]-ish range using relative intensities.
+
+            # Get voxel grid
+            voxel_grid = self.get_voxel_grid()
+
+            min_int_rel = 0.0
+            if not np.isnan(intensity_range[0]):
+                min_int_rel = intensity_range[0]
+
+            max_int_rel = 1.0
+            if not np.isnan(intensity_range[1]):
+                max_int_rel = intensity_range[1]
+
+            # Compute minimum and maximum intensities.
+            value_range = [np.min(voxel_grid[mask]), np.max(voxel_grid[mask])]
+            min_int = value_range[0] + min_int_rel * (value_range[1] - value_range[0])
+            max_int = value_range[0] + max_int_rel * (value_range[1] - value_range[0])
+
+            # Normalise by range
+            if not max_int == min_int:
+                voxel_grid = (voxel_grid - min_int) / (max_int - min_int)
+            else:
+                voxel_grid = voxel_grid - min_int
+
+            # Update the voxel grid
+            self.set_voxel_grid(voxel_grid=voxel_grid)
+
+            self.is_normalised = True
+
+        elif norm_method == "quantile_range":
+            # Normalisation to [0, 1]-ish range based on quantiles.
+
+            # Get voxel grid
+            voxel_grid = self.get_voxel_grid()
+
+            min_quantile = 0.0
+            if not np.isnan(intensity_range[0]):
+                min_quantile = intensity_range[0]
+
+            max_quantile = 1.0
+            if not np.isnan(intensity_range[1]):
+                max_quantile = intensity_range[1]
+
+            # Compute quantiles from voxel grid.
+            min_int = np.quantile(voxel_grid[mask], q=min_quantile)
+            max_int = np.quantile(voxel_grid[mask], q=max_quantile)
+
+            # Normalise by range
+            if not max_int == min_int:
+                voxel_grid = (voxel_grid - min_int) / (max_int - min_int)
+            else:
+                voxel_grid = voxel_grid - min_int
 
             # Update the voxel grid
             self.set_voxel_grid(voxel_grid=voxel_grid)
@@ -398,13 +515,17 @@ class ImageClass:
             self.is_normalised = True
 
         elif norm_method == "standardisation":
+            # Normalisation to mean 0 and standard deviation 1.
 
             # Get voxel grid
             voxel_grid = self.get_voxel_grid()
 
             # Determine mean and standard deviation of the voxel intensities
-            mean_int = np.mean(voxel_grid)
-            sd_int = np.std(voxel_grid)
+            mean_int = np.mean(voxel_grid[mask])
+            sd_int = np.std(voxel_grid[mask])
+
+            # Protect against invariance.
+            if sd_int == 0.0: sd_int = 1.0
 
             # Normalise
             voxel_grid = (voxel_grid - mean_int) / sd_int
@@ -414,7 +535,9 @@ class ImageClass:
 
             self.is_normalised = True
         else:
-            raise ValueError("\"%s\" is not a valid method for normalising intensity values.", norm_method)
+            raise ValueError(f"{norm_method} is not a valid method for normalising intensity values.")
+
+        self.saturate(intensity_range=saturation_range)
 
     def rotate(self, angle):
         """Rotate volume along z-axis."""
@@ -451,29 +574,30 @@ class ImageClass:
         # Update voxel grid with rotated voxels
         self.set_voxel_grid(voxel_grid=voxel_grid)
 
-    def translate(self, t_x=0.0, t_y=0.0, t_z=0.0):
-        """Translate image volume"""
-        from mirp.imageProcess import interpolate_to_new_grid
+    # def translate(self, t_x=0.0, t_y=0.0, t_z=0.0):
+    #     """Translate image volume"""
+    #     from mirp.imageProcess import interpolate_to_new_grid
+    #
+    #     # Skip for missing images
+    #     if self.is_missing:
+    #         return
+    #
+    #     # Calculate the new sample origin after translation
+    #     sample_origin = np.array(self.origin)
+    #     sample_origin[0] += t_z * self.spacing[0]
+    #     sample_origin[1] += t_y * self.spacing[1]
+    #     sample_origin[2] += t_x * self.spacing[2]
+    #
+    #     # Interpolate at shift points
+    #     self.size, self.origin, self.spacing, upd_voxel_grid = \
+    #         interpolate_to_new_grid(orig_dim=self.size, orig_origin=self.origin, orig_spacing=self.spacing, orig_vox=self.get_voxel_grid(),
+    #                                 sample_dim=self.size, sample_origin=sample_origin, sample_spacing=self.spacing, order=1, mode="nearest")
+    #
+    #     # Update voxel grid
+    #     self.set_voxel_grid(voxel_grid=upd_voxel_grid)
 
-        # Skip for missing images
-        if self.is_missing:
-            return
-
-        # Calculate the new sample origin after translation
-        sample_origin = np.array(self.origin)
-        sample_origin[0] += t_z * self.spacing[0]
-        sample_origin[1] += t_y * self.spacing[1]
-        sample_origin[2] += t_x * self.spacing[2]
-
-        # Interpolate at shift points
-        self.size, self.origin, self.spacing, upd_voxel_grid = \
-            interpolate_to_new_grid(orig_dim=self.size, orig_origin=self.origin, orig_spacing=self.spacing, orig_vox=self.get_voxel_grid(),
-                                    sample_dim=self.size, sample_origin=sample_origin, sample_spacing=self.spacing, order=1, mode="nearest")
-
-        # Update voxel grid
-        self.set_voxel_grid(voxel_grid=upd_voxel_grid)
-
-    def crop(self, map_ext_z, map_ext_y, map_ext_x, xy_only=False, z_only=False):
+    def crop(self, ind_ext_z=None, ind_ext_y=None, ind_ext_x=None,
+             xy_only=False, z_only=False):
         """"Crop image to the provided map extent."""
         from mirp.utilities import world_to_index
 
@@ -481,18 +605,13 @@ class ImageClass:
         if self.is_missing:
             return
 
-        # Determine map extent in normalised image space
-        ind_ext_z = np.around(world_to_index(map_ext_z, self.origin[0], self.spacing[0]), 5)
-        ind_ext_y = np.around(world_to_index(map_ext_y, self.origin[1], self.spacing[1]), 5)
-        ind_ext_x = np.around(world_to_index(map_ext_x, self.origin[2], self.spacing[2]), 5)
-
         # Determine corresponding voxel indices
         max_ind = np.ceil(np.array((np.max(ind_ext_z), np.max(ind_ext_y), np.max(ind_ext_x)))).astype(np.int)
         min_ind = np.floor(np.array((np.min(ind_ext_z), np.min(ind_ext_y), np.min(ind_ext_x)))).astype(np.int)
 
         # Set bounding indices
         max_bound_ind = np.minimum(max_ind, self.size).astype(np.int)
-        min_bound_ind = np.maximum(min_ind, [0, 0, 0]).astype(np.int)
+        min_bound_ind = np.maximum(min_ind, np.array([0, 0, 0])).astype(np.int)
 
         # Get voxel grid
         voxel_grid = self.get_voxel_grid()
@@ -514,8 +633,7 @@ class ImageClass:
                                     min_bound_ind[2]:max_bound_ind[2] + 1]
 
         # Update origin and z-slice position
-        self.origin = self.origin + np.multiply(min_bound_ind, self.spacing)
-        self.slice_z_pos = self.origin[0] + np.arange(0, max_bound_ind[0]-min_bound_ind[0]+1) * self.spacing[0]
+        self.origin = self.origin + np.dot(self.m_affine, np.transpose(min_bound_ind))
 
         # Update voxel grid
         self.set_voxel_grid(voxel_grid=voxel_grid)
@@ -566,9 +684,8 @@ class ImageClass:
         # Restore the original dtype in case it got lost
         cropped_grid = cropped_grid.astype(voxel_grid.dtype)
 
-        # Update origin and slice positions
-        self.origin = self.origin + np.multiply(grid_origin, self.spacing)
-        self.slice_z_pos = self.origin[0] + np.arange(crop_size[0]) * self.spacing[0]
+        # Update origin
+        self.origin = self.origin + np.dot(self.m_affine, np.transpose(grid_origin))
 
         # Set voxel grid
         self.set_voxel_grid(voxel_grid=cropped_grid)
@@ -775,7 +892,6 @@ class ImageClass:
         base_img_obj = self.copy()
 
         # Remove attributes that need to be set
-        base_img_obj.slice_z_pos = None
         base_img_obj.isEncoded_voxel_grid = None
         base_img_obj.voxel_grid = None
         base_img_obj.size = None
@@ -790,8 +906,7 @@ class ImageClass:
                 slice_img_obj = copy.deepcopy(base_img_obj)
 
                 # Update origin and slice position
-                slice_img_obj.origin[0] += ii * slice_img_obj.spacing[0]
-                slice_img_obj.slice_z_pos = np.array(slice_img_obj.origin[0])
+                slice_img_obj.origin += np.dot(self.m_affine, np.array([ii, 0, 0]))
 
                 # Update name
                 if slice_img_obj.name is not None:
@@ -808,8 +923,7 @@ class ImageClass:
             slice_img_obj = copy.deepcopy(base_img_obj)
 
             # Update origin and slice position
-            slice_img_obj.origin[0] += slice_number * slice_img_obj.spacing[0]
-            slice_img_obj.slice_z_pos = np.array(slice_img_obj.origin[0])
+            slice_img_obj.origin += np.dot(self.m_affine, np.array([slice_number, 0, 0]))
 
             # Update name
             if slice_img_obj.name is not None:
@@ -1137,7 +1251,7 @@ class ImageClass:
 
         # Set the source instance sequence
         source_instance_list = []
-        for reference_instance_sop_uid in self.metadata_sop_instances:
+        for reference_instance_sop_uid in self.slice_table.sop_instance_uid:
             ref_inst = Dataset()
             set_pydicom_meta_tag(dcm_seq=ref_inst, tag=(0x0008, 0x1150), value=get_pydicom_meta_tag(dcm_seq=old_dcm, tag=(0x0008, 0x0016), tag_type="str"))
             set_pydicom_meta_tag(dcm_seq=ref_inst, tag=(0x0008, 0x1155), value=reference_instance_sop_uid)

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from pydicom import FileDataset
 
-from mirp.contourClass import ContourClass
+# from mirp.contourClass import ContourClass
 from mirp.imageClass import ImageClass
 from mirp.imageMetaData import get_pydicom_meta_tag, set_pydicom_meta_tag
 
@@ -27,7 +27,6 @@ def merge_roi_objects(roi_list):
     roi_spacing = roi_list[0].roi.spacing
     roi_orientation = roi_list[0].roi.orientation
     roi_size = roi_list[0].roi.size
-    roi_slice_z_pos = roi_list[0].roi.slice_z_pos
 
     roi_mask = np.zeros(roi_size, dtype=np.bool)
 
@@ -57,8 +56,7 @@ def merge_roi_objects(roi_list):
         roi_mask = np.logical_or(roi_mask, roi.roi.get_voxel_grid())
 
     # Create a roi mask object
-    roi_mask_obj = ImageClass(voxel_grid=roi_mask, origin=roi_origin, spacing=roi_spacing, orientation=roi_orientation,
-                              slice_z_pos=roi_slice_z_pos)
+    roi_mask_obj = ImageClass(voxel_grid=roi_mask, origin=roi_origin, spacing=roi_spacing, orientation=roi_orientation)
 
     # Set name of the roi
     combined_roi_name = "+".join([roi.name for roi in roi_list])
@@ -76,11 +74,12 @@ class RoiClass:
 
         self.name = name
         if contour is not None:
-            contour_list = []
-            for curr_contour in contour:
-                contour_list.append(ContourClass(contour=curr_contour))
-
-            self.contour = contour_list
+            # contour_list = []
+            # for curr_contour in contour:
+            #     contour_list.append(ContourClass(contour=curr_contour))
+            #
+            # self.contour = contour_list
+            self.contour = contour
         else:
             self.contour = None
 
@@ -145,8 +144,7 @@ class RoiClass:
             roi_mask = roi_label_mask == np.argmax(roi_sizes) + 1
 
         # Store roi as image object
-        self.roi = ImageClass(voxel_grid=roi_mask, origin=img_obj.origin, spacing=img_obj.spacing, orientation=img_obj.orientation,
-                              slice_z_pos=img_obj.slice_z_pos)
+        self.roi = ImageClass(voxel_grid=roi_mask, origin=img_obj.origin, spacing=img_obj.spacing, orientation=img_obj.orientation)
 
         # Remove contour information
         self.contour = None
@@ -185,7 +183,7 @@ class RoiClass:
         # Binarise
         self.binarise_mask()
 
-    def register(self, img_obj, apply_to_self=True):
+    def register(self, img_obj: ImageClass, apply_to_self=True):
         """Register roi with image
         Do not apply threshold until after interpolation"""
 
@@ -215,15 +213,28 @@ class RoiClass:
         if np.any([np.abs(self.roi.spacing - img_obj.spacing) > 0.0]):
             registration_required = True
 
+        if not np.allclose(self.roi.orientation, img_obj.orientation):
+            raise ValueError("Cannot register segmentation and image object due to different alignments. "
+                             "Please use an external programme to transfer segmentation to the image.")
+
         if registration_required:
             # Register roi to image; this transforms the roi grid into
-            self.roi.size, self.roi.origin, self.roi.spacing, voxel_grid = \
-                interpolate_to_new_grid(orig_dim=self.roi.size, orig_origin=self.roi.origin, orig_spacing=self.roi.spacing, orig_vox=self.roi.get_voxel_grid(),
-                                        sample_dim=img_obj.size, sample_origin=img_obj.origin, sample_spacing=img_obj.spacing,
-                                        order=1, mode="nearest", align_to_center=False)
+            self.roi.size, sample_spacing, voxel_grid, grid_origin = \
+                interpolate_to_new_grid(orig_dim=self.roi.size,
+                                        orig_spacing=self.roi.spacing,
+                                        orig_vox=self.roi.get_voxel_grid(),
+                                        sample_dim=img_obj.size,
+                                        sample_spacing=img_obj.spacing,
+                                        grid_origin=np.dot(self.roi.m_affine_inv, np.transpose(img_obj.origin - self.roi.origin)),
+                                        order=1,
+                                        mode="nearest",
+                                        align_to_center=False)
 
-            # Update slice position
-            self.roi.slice_z_pos = self.roi.origin[0] + np.arange(self.roi.size[0]) * self.roi.spacing[0]
+            # Update origin before spacing, because computing the origin requires the original affine matrix.
+            self.roi.origin = self.roi.origin + np.dot(self.roi.m_affine, np.transpose(grid_origin))
+
+            # Update spacing and affine matrix.
+            self.roi.set_spacing(sample_spacing)
 
             # Update voxel grid
             self.roi.set_voxel_grid(voxel_grid=voxel_grid)
@@ -254,16 +265,31 @@ class RoiClass:
 
         self.roi.set_voxel_grid(voxel_grid=np.logical_or(self.roi_intensity.get_voxel_grid(), self.roi_morphology.get_voxel_grid()))
 
-    def crop(self, map_ext_z, map_ext_y, map_ext_x, xy_only=False, z_only=False):
+    def crop(self, ind_ext_z=None, ind_ext_y=None, ind_ext_x=None,
+             xy_only=False, z_only=False):
         """"Resects roi"""
 
         # Resect masks
         if self.roi is not None:
-            self.roi.crop(map_ext_z=map_ext_z, map_ext_y=map_ext_y, map_ext_x=map_ext_x, xy_only=xy_only, z_only=z_only)
+            self.roi.crop(ind_ext_z=ind_ext_z,
+                          ind_ext_y=ind_ext_y,
+                          ind_ext_x=ind_ext_x,
+                          xy_only=xy_only,
+                          z_only=z_only)
+
         if self.roi_intensity is not None:
-            self.roi_intensity.crop(map_ext_z=map_ext_z, map_ext_y=map_ext_y, map_ext_x=map_ext_x, xy_only=xy_only, z_only=z_only)
+            self.roi_intensity.crop(ind_ext_z=ind_ext_z,
+                                    ind_ext_y=ind_ext_y,
+                                    ind_ext_x=ind_ext_x,
+                                    xy_only=xy_only,
+                                    z_only=z_only)
+
         if self.roi_morphology is not None:
-            self.roi_morphology.crop(map_ext_z=map_ext_z, map_ext_y=map_ext_y, map_ext_x=map_ext_x, xy_only=xy_only, z_only=z_only)
+            self.roi_morphology.crop(ind_ext_z=ind_ext_z,
+                                     ind_ext_y=ind_ext_y,
+                                     ind_ext_x=ind_ext_x,
+                                     xy_only=xy_only,
+                                     z_only=z_only)
 
     def crop_to_size(self, center, crop_size, xy_only=False):
         """"Crops roi to a pre-defined size"""
@@ -272,9 +298,9 @@ class RoiClass:
         if self.roi is not None:
             self.roi.crop_to_size(center=center, crop_size=crop_size, xy_only=xy_only)
         if self.roi_intensity is not None:
-            self.roi_intensity.crop(center=center, crop_size=crop_size, xy_only=xy_only)
+            self.roi_intensity.crop_to_size(center=center, crop_size=crop_size, xy_only=xy_only)
         if self.roi_morphology is not None:
-            self.roi_morphology.crop(center=center, crop_size=crop_size, xy_only=xy_only)
+            self.roi_morphology.crop_to_size(center=center, crop_size=crop_size, xy_only=xy_only)
 
     def resegmentise_mask(self, img_obj, by_slice, method, settings):
         # Resegmentation of the roi map based on grey level values
@@ -884,15 +910,17 @@ class RoiClass:
         :return:
         """
 
-        roi_str = img_obj.get_export_descriptor()
-        roi_str += self.get_export_descriptor()
+        roi_str_components = [img_obj.get_export_descriptor()]
+        roi_str_components += [self.get_export_descriptor()]
 
         # Write morphological and intensity roi
         if self.roi_morphology is not None and self.roi_intensity is not None:
-            self.roi_morphology.write(file_path=file_path, file_name=roi_str + "_morph.nii.gz")
-            self.roi_intensity.write(file_path=file_path, file_name=roi_str + "_int.nii.gz")
+            self.roi_morphology.write(file_path=file_path, file_name="_".join(roi_str_components + ["morph.nii.gz"]))
+            self.roi_intensity.write(file_path=file_path, file_name="_".join(roi_str_components + ["int.nii.gz"]))
+
         elif self.roi is not None:
-            self.roi.write(file_path=file_path, file_name=roi_str + ".nii.gz")
+            self.roi.write(file_path=file_path, file_name="_".join(roi_str_components + ["nii.gz"]))
+
         else:
             return
 
@@ -901,18 +929,20 @@ class RoiClass:
         Generates an export string for identifying a file
         :return: export string
         """
-        export_str = ""
+        descr_list = []
 
         if self.adapt_size != 0.0:
             # Volume adaptation
-            export_str += "_vol" + str(self.adapt_size)
+            descr_list += ["vol",
+                           str(self.adapt_size)]
         if self.svx_randomisation_id != -1:
             # Contour randomisation
-            export_str += "_svx" + str(self.svx_randomisation_id)
+            descr_list += ["svx",
+                           str(self.svx_randomisation_id)]
 
-        export_str += self.name
+        descr_list += [self.name]
 
-        return export_str
+        return "_".join(descr_list)
 
     def get_slices(self, slice_number=None):
         # Extract roi objects for each slice

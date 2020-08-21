@@ -98,17 +98,23 @@ class ExperimentClass:
         """
 
         import logging
-        from mirp.imageRead import find_imaging_parameters_deprecated
+        from mirp.imageRead import find_imaging_parameters
 
         # Notify for start extraction of image meta data
         logging.info("Starting extraction of image metadata for %s.", self.subject)
 
         # Find files and extract meta data to a dataframe
-        df_meta = find_imaging_parameters_deprecated(image_folder=self.image_folder, modality=self.modality, subject=self.subject, plot_images=self.plot_images,
-                                                     write_folder=self.write_path, roi_folder=self.roi_folder, roi_reg_img_folder=self.roi_reg_img_folder,
-                                                     settings=self.settings, roi_names=self.roi_names)
+        metadata_table = find_imaging_parameters(image_folder=self.image_folder,
+                                                 modality=self.modality,
+                                                 subject=self.subject,
+                                                 plot_images=self.plot_images,
+                                                 write_folder=self.write_path,
+                                                 roi_folder=self.roi_folder,
+                                                 registration_image_folder=self.roi_reg_img_folder,
+                                                 settings=self.settings,
+                                                 roi_names=self.roi_names)
 
-        return df_meta
+        return metadata_table
 
     def get_file_structure_information(self, include_path_info=False):
         # Extract image metadata
@@ -262,7 +268,9 @@ class ExperimentClass:
         import os
         import logging
         from mirp.imageRead import load_image
-        from mirp.imageProcess import crop_image, estimate_image_noise, interpolate_image, interpolate_roi, divide_tumour_regions, resegmentise, calculate_features, transform_images
+        from mirp.imageProcess import crop_image, estimate_image_noise, interpolate_image,\
+            interpolate_roi, divide_tumour_regions, resegmentise, calculate_features, transform_images, \
+            create_tissue_mask, bias_field_correction, normalise_image
         from mirp.imagePerturbations import rotate_image, adapt_roi_size, randomise_roi_contours
         import copy
 
@@ -317,17 +325,17 @@ class ExperimentClass:
             else:
                 # Read image and ROI segmentations
                 img_obj, roi_list = load_image(image_folder=self.image_folder,
-                                                     modality=self.modality,
-                                                     roi_folder=self.roi_folder,
-                                                     registration_image_folder=self.roi_reg_img_folder,
-                                                     image_name=self.image_file_name_pattern,
-                                                     roi_names=self.roi_names,
-                                                     registration_image_name=self.registration_image_file_name_pattern)
+                                               modality=self.modality,
+                                               roi_folder=self.roi_folder,
+                                               registration_image_folder=self.roi_reg_img_folder,
+                                               image_name=self.image_file_name_pattern,
+                                               roi_names=self.roi_names,
+                                               registration_image_name=self.registration_image_file_name_pattern)
                 self.set_image_name(img_obj=img_obj)
 
-            # Crop slice stack (z only)
+            # Crop slice stack
             if self.settings.vol_adapt.crop:
-                img_obj, roi_list = crop_image(img_obj=img_obj, roi_list=roi_list, boundary=150.0, z_only=True)
+                img_obj, roi_list = crop_image(img_obj=img_obj, roi_list=roi_list, boundary=self.settings.vol_adapt.crop_distance)
 
             # Extract diagnostic features from initial image and rois
             self.extract_diagnostic_features(img_obj=img_obj, roi_list=roi_list, append_str="init")
@@ -345,6 +353,25 @@ class ExperimentClass:
             curr_setting.vol_adapt.translate_x = [iter_set.translate_x[ii]]
             curr_setting.vol_adapt.translate_y = [iter_set.translate_y[ii]]
             curr_setting.vol_adapt.translate_z = [iter_set.translate_z[ii]]
+
+            ########################################################################################################
+            # Bias field correction and normalisation
+            ########################################################################################################
+
+            # Create a tissue mask
+            if curr_setting.post_process.bias_field_correction or not curr_setting.post_process.intensity_normalisation == "none":
+                tissue_mask = create_tissue_mask(img_obj=img_obj, settings=curr_setting)
+
+                if curr_setting.post_process.bias_field_correction:
+                    # Perform bias field correction
+                    img_obj = bias_field_correction(img_obj=img_obj, settings=curr_setting, mask=tissue_mask)
+
+                # Normalise image
+                img_obj = normalise_image(img_obj=img_obj,
+                                          norm_method=curr_setting.post_process.intensity_normalisation,
+                                          intensity_range=curr_setting.post_process.intensity_normalisation_range,
+                                          saturation_range=curr_setting.post_process.intensity_normalisation_saturation,
+                                          mask=tissue_mask)
 
             ########################################################################################################
             # Determine image noise levels (optional)
@@ -426,8 +453,11 @@ class ExperimentClass:
 
             if self.settings.img_transform.perform_img_transform:
                 # Get image features from transformed images (may be empty if no features are computed)
-                iter_feat_list += transform_images(img_obj=img_obj, roi_list=roi_list, settings=curr_setting,
-                                                   compute_features=self.compute_features, extract_images=self.extract_images,
+                iter_feat_list += transform_images(img_obj=img_obj,
+                                                   roi_list=roi_list,
+                                                   settings=curr_setting,
+                                                   compute_features=self.compute_features,
+                                                   extract_images=self.extract_images,
                                                    file_path=self.write_path)
 
             ########################################################################################################
