@@ -103,7 +103,7 @@ def parse_file_structure(data_config, file, use_folder_name=True):
         data_obj.restructure_files(file=file, use_folder_name=use_folder_name)
 
 
-def extract_images_for_deep_learning(data_config, settings_config, output_slices=False, plot_images=False):
+def extract_images_for_deep_learning(data_config, settings_config, output_slices=False, plot_images=False, store_immediately=True):
     """
     Extract images for deep learning.
 
@@ -125,8 +125,6 @@ def extract_images_for_deep_learning(data_config, settings_config, output_slices
     image_list = []
     failed = []
     for data_obj in data_obj_list:
-        # TODO: put this into try catch blocks to skip failed extractions instead of hard failing
-        # also as reference log the failed objects and use img_folder and modality and print out at the end
         try:
             new_img = data_obj.process_deep_learning(output_slices=output_slices)
             image_list += [new_img]
@@ -134,10 +132,25 @@ def extract_images_for_deep_learning(data_config, settings_config, output_slices
             failed.append(data_obj)
             logging.error(f"Failed to extract data for {data_obj.subject}: {e}")
             continue
-        # TODO: write image to file immediateLY 
+
+        # TODO: write out data immediately if flag is set
+        if store_immediately:
+            assert len(new_img) == 1
+            exp_obj = new_img[0]
+
+            img = np.expand_dims(exp_obj["image"].get_voxel_grid(), -1).astype(np.float32)
+            roi = np.expand_dims(exp_obj["mask"].get_voxel_grid(), -1).astype(np.uint8)
+
+            img_file = os.path.join(exp_obj.write_path, f"{exp_obj.data_str}_img.npy")
+            np.save(img_file, img)
+            print("Stored img to", img_file)
+
+            roi_file = os.path.join(exp_obj.write_path, f"{exp_obj.data_str}_mask.npy")
+            np.save(roi_file, roi)
+            print("Stored mask to", roi_file)
 
     if failed:
-        print(f"Image extraction failed for the following patients: {[d.subject for d in failed]}")
+        print(f"Image extraction failed for patients {[d.subject for d in failed]}")
 
     return image_list
 
