@@ -3,6 +3,7 @@ import warnings
 from copy import deepcopy
 from typing import Union
 
+import logging
 import pydicom
 import pandas as pd
 import numpy as np
@@ -93,7 +94,7 @@ def read_dicom_image_series(image_folder, modality=None, series_uid=None):
         if get_pydicom_meta_tag(dcm_seq=dcm, tag=(0x0008, 0x0060), tag_type="str") == "PT":
             suv_conversion_object = SUVscalingObj(dcm=slice_dcm)
             scale_factor = suv_conversion_object.get_scale_factor(suv_normalisation="bw")
-
+            # print(f"Applying SUV scaling with scale_factor {scale_factor}")
             # Convert to SUV
             slice_grid *= scale_factor
 
@@ -256,12 +257,20 @@ def read_roi_names(dcm_folder):
 
     # Open DICOM files and read names
     for file_name in file_list:
+        # print("\nread_roi_names: file_name", file_name)
         dcm_file = os.path.join(dcm_folder, file_name)
         dcm = pydicom.dcmread(dcm_file, stop_before_pixels=True, force=True)
 
         # Obtain ROI names
-        roi_names += _find_dicom_roi_names(dcm=dcm, with_roi_number=False)
-        file_name_list += [file_name] * len(roi_names)
+        found_names = _find_dicom_roi_names(dcm=dcm, with_roi_number=False)
+        # print("found_names", found_names)
+        roi_names += found_names
+
+        names_to_add = [file_name] * len(found_names)
+        # print("names_to_add", names_to_add)
+        file_name_list += names_to_add
+        # print("roi_names is now", roi_names)
+        # print("file_name_list is now", file_name_list)
 
     return file_name_list, roi_names
 
@@ -284,6 +293,7 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
 
     # Identify modality of the files
     for file_name in file_list:
+        # print(os.path.join(image_folder, file_name))
         # Read DICOM header using pydicom
         dcm = pydicom.dcmread(os.path.join(image_folder, file_name), stop_before_pixels=True, force=True)
 
@@ -325,13 +335,13 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
 
     # Check if the requested modality was found.
     if len(file_list) == 0:
-        raise ValueError(f"The DICOM folder does not contain any DICOM images with a currently supported modality ({allowed_modalities}).")
+        raise ValueError(f"The DICOM folder {image_folder} does not contain any DICOM images with a currently supported modality ({allowed_modalities}).")
 
     if disable_checks:
         return file_list
 
-    print(f"in _find_dicom_image_series:\nfile_list={file_list}\n\nseries_series_uid={series_series_uid}"
-          f"\n\nseries_FOR_uid={series_FOR_uid}")
+    # print(f"in _find_dicom_image_series:\nfile_list={file_list}\n\nseries_series_uid={series_series_uid}"
+    #       f"\n\nseries_FOR_uid={series_FOR_uid}")
 
     # Check uniqueness of series UID
     if len(list(set(series_series_uid))) > 1 and series_uid is None and frame_of_ref_uid is None:
@@ -391,6 +401,7 @@ def _get_frame_of_reference_uid(dcm):
 
     # For RT structure sets, the FOR UID may be tucked away in the Structure Set ROI Sequence
     if has_pydicom_meta_tag(dcm_seq=dcm, tag=(0x3006, 0x0020)):
+
         structure_set_roi_sequence = dcm[(0x3006, 0x0020)]
 
         for structure_set_roi_element in structure_set_roi_sequence:
@@ -574,7 +585,7 @@ def _convert_rtstruct_to_segmentation(dcm: FileDataset, roi: str, image_object: 
     if len(contour_data_list) > 0:
         # Create a new ROI object.
         roi_obj = RoiClass(name="+".join(deparsed_roi), contour=contour_data_list, metadata=dcm)
-
+        # print("call create_mask_from_contours for roi", roi)
         # Convert contour into segmentation object
         roi_obj.create_mask_from_contours(img_obj=image_object, disconnected_segments="keep_as_is")
 

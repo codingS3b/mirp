@@ -512,7 +512,7 @@ class ExperimentClass:
             level=logging.INFO, stream=sys.stdout)
 
         # Notifications
-        logging.info("\nInitialising image and mask processing using %s images for %s.", self.modality + "_" + self.data_str + "_", self.subject)
+        logging.info("\n\nInitialising image and mask processing using %s images for %s.", self.modality + "_" + self.data_str, self.subject)
 
         # Get iterables from current settings which lead to different image adaptations
         iter_set, n_outer_iter, n_inner_iter = self.get_iterable_parameters(settings=self.settings)
@@ -565,6 +565,11 @@ class ExperimentClass:
                                                registration_image_name=self.registration_image_file_name_pattern)
                 self.set_image_name(img_obj=img_obj)
 
+            print("\nOriginal image size (before processing)", img_obj.get_voxel_grid().shape, "\n")
+            if roi_list:
+                print("\nroi_list has length", len(roi_list))
+                for roi in roi_list:
+                    print(roi.roi.get_voxel_grid().shape)
 
             ########################################################################################################
             # Update settings and initialise
@@ -579,6 +584,10 @@ class ExperimentClass:
             curr_setting.vol_adapt.translate_x = [iter_set.translate_x[ii]]
             curr_setting.vol_adapt.translate_y = [iter_set.translate_y[ii]]
             curr_setting.vol_adapt.translate_z = [iter_set.translate_z[ii]]
+
+            # print("Set vol_adapt.translate_x to", curr_setting.vol_adapt.translate_x)
+            # print("Set vol_adapt.translate_y to", curr_setting.vol_adapt.translate_y)
+            # print("Set vol_adapt.translate_z to", curr_setting.vol_adapt.translate_z)
 
             ########################################################################################################
             # Determine image noise levels (optional)

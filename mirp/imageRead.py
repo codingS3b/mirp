@@ -25,6 +25,9 @@ def find_regions_of_interest(roi_folder, subject):
     if len(roi_names) == 0:
         warnings.warn(f"No ROI segmentations were found for the current subject ({subject}).")
 
+    # print(f"in find_regions_of_interest:\nsubject={subject} ({len(subject)})\n\n"
+    #       f"file_name={file_names} ({len(file_names)})\n\n"
+    #       f"roi={roi_names} ({len(roi_names)})")
     roi_table = pd.DataFrame({"subject": subject, "file_name": file_names, "roi": roi_names})
 
     return roi_table

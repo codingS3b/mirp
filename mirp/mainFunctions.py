@@ -36,6 +36,8 @@ def get_roi_names(data_config=None, settings_config=None):
     file_path = os.path.normpath(os.path.join(write_path, "project_roi.csv"))
     df_roi.to_csv(path_or_buf=file_path, sep=";", na_rep="NA", index=False, decimal=".")
 
+    return df_roi
+
 
 def get_image_acquisition_parameters(data_config=None, settings_config=None, plot_images="single"):
     """ Allows automatic extraction of imaging parameters """
@@ -121,8 +123,21 @@ def extract_images_for_deep_learning(data_config, settings_config, output_slices
 
     # Process images for deep learning
     image_list = []
+    failed = []
     for data_obj in data_obj_list:
-        image_list += [data_obj.process_deep_learning(output_slices=output_slices)]
+        # TODO: put this into try catch blocks to skip failed extractions instead of hard failing
+        # also as reference log the failed objects and use img_folder and modality and print out at the end
+        try:
+            new_img = data_obj.process_deep_learning(output_slices=output_slices)
+            image_list += [new_img]
+        except Exception as e:
+            failed.append(data_obj)
+            logging.error(f"Failed to extract data for {data_obj.subject}: {e}")
+            continue
+        # TODO: write image to file immediateLY 
+
+    if failed:
+        print(f"Image extraction failed for the following patients: {[d.subject for d in failed]}")
 
     return image_list
 
