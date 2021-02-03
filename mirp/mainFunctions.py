@@ -122,37 +122,46 @@ def extract_images_for_deep_learning(data_config, settings_config, output_slices
                                          compute_features=False, extract_images=False, plot_images=plot_images)
 
     # Process images for deep learning
-    image_list = []
+    image_lists = []
     failed = []
-    for data_obj in data_obj_list:
+    for exp_obj in data_obj_list:
         try:
-            new_img = data_obj.process_deep_learning(output_slices=output_slices)
-            image_list += [new_img]
+            new_img_list = exp_obj.process_deep_learning(output_slices=output_slices)
+            image_lists += [new_img_list]
         except Exception as e:
-            failed.append(data_obj)
-            logging.error(f"Failed to extract data for {data_obj.subject}: {e}")
+            failed.append(exp_obj)
+            logging.error(f"Failed to extract data for {exp_obj.subject} {exp_obj.data_str}: {e}")
             continue
 
         # TODO: write out data immediately if flag is set
         if store_immediately:
-            assert len(new_img) == 1
-            exp_obj = new_img[0]
+            if not new_img_list:
+                print(f"Skipping {exp_obj.data_str} since no elements in list")
+            elif len(new_img_list) != 1:
+                print(f"Warn: {exp_obj.data_str} produced new_img of length {len(new_img_list)}, expected length 1!")
+            for i, img_dict in enumerate(new_img_list):
+                img_obj = img_dict["image"]
+                roi_obj = img_dict["mask"]
+                print(f"\t{i}: {img_obj.name}, {roi_obj.name}")
+                img = np.expand_dims(img_obj.get_voxel_grid(), -1).astype(np.float32)
+                roi = np.expand_dims(roi_obj.roi.get_voxel_grid(), -1).astype(np.uint8)
+                
+                pat_dir = os.path.join(exp_obj.write_path, exp_obj.subject, exp_obj.data_str)
+                if not os.path.isdir(pat_dir):
+                    os.makedirs(pat_dir)
 
-            img = np.expand_dims(exp_obj["image"].get_voxel_grid(), -1).astype(np.float32)
-            roi = np.expand_dims(exp_obj["mask"].get_voxel_grid(), -1).astype(np.uint8)
+                img_file = os.path.join(pat_dir, f"img_{roi_obj.name}.npy")
+                np.save(img_file, img)
+                print("Stored img to", img_file)
 
-            img_file = os.path.join(exp_obj.write_path, f"{exp_obj.data_str}_img.npy")
-            np.save(img_file, img)
-            print("Stored img to", img_file)
-
-            roi_file = os.path.join(exp_obj.write_path, f"{exp_obj.data_str}_mask.npy")
-            np.save(roi_file, roi)
-            print("Stored mask to", roi_file)
+                roi_file = os.path.join(pat_dir, f"mask_{roi_obj.name}.npy")
+                np.save(roi_file, roi)
+                print("Stored mask to", roi_file)
 
     if failed:
         print(f"Image extraction failed for patients {[d.subject for d in failed]}")
 
-    return image_list
+    return image_lists
 
 
 def parallel_process(data_obj):
