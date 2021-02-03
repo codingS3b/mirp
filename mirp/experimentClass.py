@@ -512,7 +512,7 @@ class ExperimentClass:
             level=logging.INFO, stream=sys.stdout)
 
         # Notifications
-        logging.info("\n\nInitialising image and mask processing using %s images for %s.", self.modality + "_" + self.data_str, self.subject)
+        logging.info("\n\nInitialising image and mask processing using %s images for %s.", self.data_str, self.subject)
 
         # Get iterables from current settings which lead to different image adaptations
         iter_set, n_outer_iter, n_inner_iter = self.get_iterable_parameters(settings=self.settings)
@@ -569,7 +569,7 @@ class ExperimentClass:
             if roi_list:
                 print("\nroi_list has length", len(roi_list))
                 for roi in roi_list:
-                    print(roi.roi.get_voxel_grid().shape)
+                    print(roi.name, roi.roi.get_voxel_grid().shape)
 
             ########################################################################################################
             # Update settings and initialise
