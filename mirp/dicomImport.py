@@ -284,7 +284,7 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
     file_list = [file_name for file_name in file_list if file_name.lower().endswith(".dcm")]
 
     if len(file_list) == 0:
-        raise FileNotFoundError(f"The image folder does not contain any DICOM files.")
+        raise FileNotFoundError(f"The image folder {image_folder} does not contain any DICOM files.")
 
     # Modality and series UID
     series_modality = []
@@ -335,6 +335,7 @@ def _find_dicom_image_series(image_folder, allowed_modalities, modality=None, se
 
     # Check if the requested modality was found.
     if len(file_list) == 0:
+        print("series_modality", series_modality, "requested modality", requested_modality)
         raise ValueError(f"The DICOM folder {image_folder} does not contain any DICOM images with a currently supported modality ({allowed_modalities}).")
 
     if disable_checks:
